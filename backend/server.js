@@ -27,6 +27,7 @@ const adminAgentAreaRoutes = require("./routes/admin-agent-areas");
 const adminLoanAgentRoutes = require("./routes/admin-loan-agents");
 const adminCashCollectionRoutes = require("./routes/admin-cash-collections");
 const adminCashSettlementRoutes = require("./routes/admin-cash-settlements");
+const adminFinancialReportRoutes = require("./routes/admin-financial-reports");
 
 // NEW: Agent Dashboard
 const agentDashboardRoutes = require("./routes/agent-dashboard");
@@ -92,6 +93,11 @@ app.use(
   adminLoanCreationRoutes
 );
 
+app.use(
+  "/api/admin/loans",
+  adminLoanCreationRoutes
+);
+
 // ========================================
 // PAYMENT MANAGEMENT
 // ========================================
@@ -144,6 +150,15 @@ app.use(
 app.use(
   "/api/admin/cash-settlements",
   adminCashSettlementRoutes
+);
+
+// ========================================
+// ADMIN FINANCIAL REPORTS & ACCOUNTING LEDGER
+// ========================================
+
+app.use(
+  "/api/admin/financial-reports",
+  adminFinancialReportRoutes
 );
 
 // ========================================

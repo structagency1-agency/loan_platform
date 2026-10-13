@@ -478,11 +478,12 @@ async function runStep19Tests() {
                     loanId: targetLoan.id,
                     emiId: targetEmi.id,
                     amount: "1.00",
+                    notes: "Step 19 regression verification collection",
                 }),
             });
             const retryJson = await retryRes.json();
             if (retryRes.status !== 200 || !retryJson.duplicate) {
-                throw new Error("Step 18 idempotency retry failed!");
+                throw new Error(`Step 18 idempotency retry failed! Status ${retryRes.status}: ${JSON.stringify(retryJson)}`);
             }
             console.log("  ✓ Step 18 Idempotency retry verified (duplicate: true, status: 200)");
         }

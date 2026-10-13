@@ -219,6 +219,13 @@ router.post("/", async (req, res) => {
             });
         }
 
+        if (loan.status === "PENDING_DISBURSEMENT") {
+            return res.status(400).json({
+                success: false,
+                message: "Cannot assign agents to a loan that is pending disbursement",
+            });
+        }
+
         if (!agent) {
             return res.status(404).json({
                 success: false,

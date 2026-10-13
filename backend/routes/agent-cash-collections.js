@@ -7,6 +7,7 @@ const { authorizeRoles } = require("../middleware/roles");
 const {
     applyPaymentWithRetry,
     parseAndValidateMoney,
+    toDecimal,
 } = require("../services/payment-engine");
 const { parseDateRange } = require("../lib/date-utils");
 
@@ -16,11 +17,107 @@ const router = express.Router();
 router.use(authenticateToken, authorizeRoles("AGENT"));
 
 /**
+ * Verifies whether an existing committed payment matches the request details.
+ */
+function verifyMatchingPaymentDetails(
+    existingPayment,
+    loanId,
+    emiId,
+    parsedAmount,
+    normalizedNotes,
+    agentId
+) {
+    if (!existingPayment) return false;
+    if (existingPayment.status !== "SUCCESS") return false;
+    if (existingPayment.mode !== "CASH") return false;
+    if (!existingPayment.cashCollection) return false;
+    if (existingPayment.cashCollection.agentId !== agentId) return false;
+    if (existingPayment.loanId !== loanId.trim()) return false;
+    if (existingPayment.emiId !== emiId.trim()) return false;
+
+    if (!toDecimal(existingPayment.amount).equals(parsedAmount)) return false;
+
+    const existingNotes = existingPayment.cashCollection.notes || null;
+    const requestedNotes = normalizedNotes || null;
+    if (existingNotes !== requestedNotes) return false;
+
+    return true;
+}
+
+/**
+ * Formats a payment, emi, loan, and cashCollection into the standard API response shape.
+ */
+function formatCollectionResponse(
+    payment,
+    emi,
+    loan,
+    cashCollection,
+    duplicate = false
+) {
+    const statusCode = duplicate ? 200 : 201;
+    const message = duplicate
+        ? "Collection request already processed"
+        : "Cash collection recorded successfully";
+
+    return {
+        statusCode,
+        body: {
+            success: true,
+            message,
+            duplicate,
+            paymentId: payment.id,
+            receiptNumber: payment.receiptNumber,
+            loanId: loan.id,
+            emiId: emi.id,
+            installmentNo: emi.installmentNo,
+            collectedAmount: payment.amount.toString(),
+            collectedAt: cashCollection?.collectedAt || payment.paidAt,
+            notes: cashCollection?.notes || null,
+            reconciled: cashCollection?.reconciled || false,
+            payment: {
+                id: payment.id,
+                receiptNumber: payment.receiptNumber,
+                amount: payment.amount.toString(),
+                mode: payment.mode,
+                status: payment.status,
+                paidAt: payment.paidAt,
+                createdAt: payment.createdAt,
+            },
+            emi: {
+                id: emi.id,
+                installmentNo: emi.installmentNo,
+                status: emi.status,
+                paidAmount: emi.paidAmount.toString(),
+                outstandingAmount: emi.outstandingAmount.toString(),
+                paidAt: emi.paidAt,
+            },
+            loan: {
+                id: loan.id,
+                loanNumber: loan.loanNumber,
+                outstandingAmount: loan.outstandingAmount.toString(),
+                status: loan.status,
+            },
+        },
+    };
+}
+
+/**
  * Core handler for recording a cash collection.
  */
 async function handleCashCollection(req, res) {
+    let transactionId = null;
+    let agent = null;
+    let loanId = null;
+    let emiId = null;
+    let parsedAmount = null;
+    let normalizedNotes = null;
+
     try {
-        const { loanId, emiId, amount, notes } = req.body;
+        const body = req.body || {};
+        loanId = body.loanId;
+        emiId = body.emiId;
+        const amount = body.amount;
+        const notes = body.notes;
 
         // 1. Validate mandatory input fields
         if (!loanId || typeof loanId !== "string" || !loanId.trim()) {
@@ -45,7 +142,6 @@ async function handleCashCollection(req, res) {
         }
 
         // 2. Validate amount representation and decimals
-        let parsedAmount;
         try {
             parsedAmount = parseAndValidateMoney(amount);
         } catch (validationError) {
@@ -55,8 +151,10 @@ async function handleCashCollection(req, res) {
             });
         }
 
+        normalizedNotes = notes && typeof notes === "string" ? notes.trim() : null;
+
         // 3. Confirm authenticated user is an active AGENT and load profile
-        const agent = await prisma.agentProfile.findUnique({
+        agent = await prisma.agentProfile.findUnique({
             where: {
                 userId: req.user.userId,
             },
@@ -86,7 +184,72 @@ async function handleCashCollection(req, res) {
             });
         }
 
-        // 4. Verify loan exists and is eligible for collection
+        // 4. Idempotency & Early Replay Detection
+        // Support client-provided idempotency key from header or body
+        const rawIdempotencyKey =
+            req.headers["idempotency-key"] ||
+            body.idempotencyKey ||
+            null;
+
+        if (rawIdempotencyKey) {
+            const sanitizedKey = String(rawIdempotencyKey)
+                .trim()
+                .slice(0, 64)
+                .replace(/[^a-zA-Z0-9_-]/g, "");
+
+            if (!sanitizedKey) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid Idempotency-Key provided",
+                });
+            }
+
+            // Namespace transactionId to the agent to prevent collisions or spoofing
+            transactionId = `CASH-${agent.id}-${sanitizedKey}`;
+
+            // EARLY REPLAY DETECTION BEFORE MUTABLE LOAN/EMI ELIGIBILITY CHECKS
+            const existingPayment = await prisma.payment.findUnique({
+                where: { transactionId },
+                include: {
+                    cashCollection: true,
+                    emi: true,
+                    loan: true,
+                },
+            });
+
+            if (existingPayment) {
+                const isMatch = verifyMatchingPaymentDetails(
+                    existingPayment,
+                    loanId,
+                    emiId,
+                    parsedAmount,
+                    normalizedNotes,
+                    agent.id
+                );
+
+                if (isMatch) {
+                    const { statusCode, body: resBody } = formatCollectionResponse(
+                        existingPayment,
+                        existingPayment.emi,
+                        existingPayment.loan,
+                        existingPayment.cashCollection,
+                        true
+                    );
+                    return res.status(statusCode).json(resBody);
+                } else {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Transaction ID already exists with different payment details",
+                    });
+                }
+            }
+        } else {
+            // Generate unique, non-replayable transaction identifier
+            const uniqueNonce = crypto.randomBytes(6).toString("hex");
+            transactionId = `CASH-${agent.id}-${Date.now()}-${uniqueNonce}`;
+        }
+
+        // 5. Verify loan exists and is eligible for collection
         const loan = await prisma.loan.findUnique({
             where: {
                 id: loanId.trim(),
@@ -107,7 +270,7 @@ async function handleCashCollection(req, res) {
             });
         }
 
-        // 5. Verify agent has an active assignment for this exact loan
+        // 6. Verify agent has an active assignment for this exact loan
         const activeAssignment = await prisma.loanAgentAssignment.findFirst({
             where: {
                 loanId: loan.id,
@@ -124,7 +287,7 @@ async function handleCashCollection(req, res) {
             });
         }
 
-        // 6. Verify EMI exists, belongs to this loan, and is unpaid/eligible
+        // 7. Verify EMI exists, belongs to this loan, and is unpaid/eligible
         const emi = await prisma.emiSchedule.findUnique({
             where: {
                 id: emiId.trim(),
@@ -166,7 +329,7 @@ async function handleCashCollection(req, res) {
             });
         }
 
-        // 7. Balance checks
+        // 8. Balance checks
         const emiOutstanding = Number(emi.outstandingAmount);
         if (emiOutstanding <= 0) {
             return res.status(400).json({
@@ -189,35 +352,6 @@ async function handleCashCollection(req, res) {
             });
         }
 
-        // 8. Idempotency & Transaction Identifier
-        // Support optional client-provided idempotency key from header or body
-        const rawIdempotencyKey =
-            req.headers["idempotency-key"] ||
-            req.body.idempotencyKey ||
-            null;
-
-        let transactionId;
-        if (rawIdempotencyKey) {
-            const sanitizedKey = String(rawIdempotencyKey)
-                .trim()
-                .slice(0, 64)
-                .replace(/[^a-zA-Z0-9_-]/g, "");
-
-            if (!sanitizedKey) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid Idempotency-Key provided",
-                });
-            }
-
-            // Namespace transactionId to the agent to prevent collisions or spoofing
-            transactionId = `CASH-${agent.id}-${sanitizedKey}`;
-        } else {
-            // Generate unique, non-replayable transaction identifier
-            const uniqueNonce = crypto.randomBytes(6).toString("hex");
-            transactionId = `CASH-${agent.id}-${Date.now()}-${uniqueNonce}`;
-        }
-
         // 9. Execute atomic payment recording with bounded retry for serialization conflicts
         const ipAddress =
             req.ip ||
@@ -232,55 +366,68 @@ async function handleCashCollection(req, res) {
             mode: "CASH",
             transactionId,
             agentId: agent.id,
-            notes: notes && typeof notes === "string" ? notes.trim() : null,
+            notes: normalizedNotes,
             userId: req.user.userId,
             ipAddress,
         });
 
-        const statusCode = result.duplicate ? 200 : 201;
-        const message = result.duplicate
-            ? "Collection request already processed"
-            : "Cash collection recorded successfully";
+        const { statusCode, body: resBody } = formatCollectionResponse(
+            result.payment,
+            result.emi,
+            result.loan,
+            result.cashCollection,
+            result.duplicate
+        );
 
-        return res.status(statusCode).json({
-            success: true,
-            message,
-            duplicate: result.duplicate,
-            paymentId: result.payment.id,
-            receiptNumber: result.payment.receiptNumber,
-            loanId: loan.id,
-            emiId: emi.id,
-            installmentNo: result.emi.installmentNo,
-            collectedAmount: result.payment.amount.toString(),
-            collectedAt: result.cashCollection?.collectedAt || result.payment.paidAt,
-            notes: result.cashCollection?.notes || null,
-            reconciled: result.cashCollection?.reconciled || false,
-            payment: {
-                id: result.payment.id,
-                receiptNumber: result.payment.receiptNumber,
-                amount: result.payment.amount.toString(),
-                mode: result.payment.mode,
-                status: result.payment.status,
-                paidAt: result.payment.paidAt,
-                createdAt: result.payment.createdAt,
-            },
-            emi: {
-                id: result.emi.id,
-                installmentNo: result.emi.installmentNo,
-                status: result.emi.status,
-                paidAmount: result.emi.paidAmount.toString(),
-                outstandingAmount: result.emi.outstandingAmount.toString(),
-                paidAt: result.emi.paidAt,
-            },
-            loan: {
-                id: result.loan.id,
-                loanNumber: result.loan.loanNumber,
-                outstandingAmount: result.loan.outstandingAmount.toString(),
-                status: result.loan.status,
-            },
-        });
+        return res.status(statusCode).json(resBody);
     } catch (error) {
         console.error("Cash collection error:", error);
+
+        // Concurrent request safety:
+        // If an idempotency key was supplied and this request failed due to a unique constraint
+        // conflict or race condition (e.g., another concurrent worker committed the same transactionId),
+        // re-read the committed payment and return it if matching.
+        if (transactionId && agent) {
+            try {
+                const committedPayment = await prisma.payment.findUnique({
+                    where: { transactionId },
+                    include: {
+                        cashCollection: true,
+                        emi: true,
+                        loan: true,
+                    },
+                });
+
+                if (committedPayment) {
+                    const isMatch = verifyMatchingPaymentDetails(
+                        committedPayment,
+                        loanId,
+                        emiId,
+                        parsedAmount,
+                        normalizedNotes,
+                        agent.id
+                    );
+
+                    if (isMatch) {
+                        const { statusCode, body: resBody } = formatCollectionResponse(
+                            committedPayment,
+                            committedPayment.emi,
+                            committedPayment.loan,
+                            committedPayment.cashCollection,
+                            true
+                        );
+                        return res.status(statusCode).json(resBody);
+                    } else {
+                        return res.status(400).json({
+                            success: false,
+                            message: "Transaction ID already exists with different payment details",
+                        });
+                    }
+                }
+            } catch (recheckErr) {
+                console.error("Error re-checking committed transaction after conflict:", recheckErr);
+            }
+        }
 
         if (
             error.message &&

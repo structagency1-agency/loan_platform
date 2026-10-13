@@ -333,6 +333,7 @@ async function runTests() {
                             loanId: loan.id,
                             emiId: emi.id,
                             amount: httpCollectionAmount,
+                            notes: "HTTP API test collection",
                         }),
                     }
                 );

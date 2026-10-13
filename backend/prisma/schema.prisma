@@ -32,6 +32,7 @@ enum ApplicationStatus {
 }
 
 enum LoanStatus {
+  PENDING_DISBURSEMENT
   ACTIVE
   COMPLETED
   OVERDUE
@@ -395,7 +396,11 @@ model Loan {
   startDate       DateTime?
   endDate         DateTime?
 
-  status          LoanStatus @default(ACTIVE)
+  disbursedAt     DateTime?
+  disbursementReference String?
+  disbursementProofUrl  String?
+
+  status          LoanStatus @default(PENDING_DISBURSEMENT)
 
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
