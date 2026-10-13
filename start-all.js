@@ -19,7 +19,9 @@ const SERVICES = [
   {
     name: "Customer App",
     port: 8081,
-    cwd: "C:\\Users\\mohan\\speedmoeny\\user-app",
+    cwd: require("fs").existsSync(path.resolve(__dirname, "user-app"))
+      ? path.resolve(__dirname, "user-app")
+      : "C:\\Users\\mohan\\speedmoeny\\user-app",
     cmd: process.platform === "win32" ? "npm.cmd" : "npm",
     args: ["run", "dev"],
     color: "\x1b[32m", // Green
@@ -27,7 +29,9 @@ const SERVICES = [
   {
     name: "Admin Portal",
     port: 8082,
-    cwd: "C:\\Users\\mohan\\speedmoeny\\admin-app",
+    cwd: require("fs").existsSync(path.resolve(__dirname, "admin-app"))
+      ? path.resolve(__dirname, "admin-app")
+      : "C:\\Users\\mohan\\speedmoeny\\admin-app",
     cmd: process.platform === "win32" ? "npm.cmd" : "npm",
     args: ["run", "dev"],
     color: "\x1b[34m", // Blue
@@ -35,7 +39,9 @@ const SERVICES = [
   {
     name: "Agent App",
     port: 8083,
-    cwd: "C:\\Users\\mohan\\speedmoeny\\agent-app",
+    cwd: require("fs").existsSync(path.resolve(__dirname, "agent-app"))
+      ? path.resolve(__dirname, "agent-app")
+      : "C:\\Users\\mohan\\speedmoeny\\agent-app",
     cmd: process.platform === "win32" ? "npm.cmd" : "npm",
     args: ["run", "dev"],
     color: "\x1b[33m", // Yellow

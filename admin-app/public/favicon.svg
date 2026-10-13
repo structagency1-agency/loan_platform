@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="smBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3B82F6"/>
+      <stop offset="60%" stop-color="#2563EB"/>
+      <stop offset="100%" stop-color="#1E3A8A"/>
+    </linearGradient>
+    <linearGradient id="smGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#93C5FD"/>
+      <stop offset="100%" stop-color="#60A5FA"/>
+    </linearGradient>
+    <linearGradient id="sLetter" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#F1F5F9"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="1.5" flood-color="#0F172A" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Background rounded box -->
+  <rect width="64" height="64" rx="16" fill="url(#smBg)"/>
+  
+  <!-- Subtle top-edge light border -->
+  <rect x="1.5" y="1.5" width="61" height="61" rx="14.5" fill="none" stroke="#93C5FD" stroke-width="1.5" stroke-opacity="0.35"/>
+
+  <!-- Speed streaks (left and right accents) -->
+  <path d="M 11 26 L 17 26" stroke="url(#smGlow)" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M 47 38 L 53 38" stroke="url(#smGlow)" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- Stylized Italic S for Speed Money -->
+  <g filter="url(#shadow)">
+    <path d="M 43.8 17.2
+             C 41.2 15.1 37.6 14 33.2 14
+             C 23.5 14 18 19 18 25.5
+             C 18 32.8 25.5 35 32 37.2
+             C 37.2 38.8 39.5 40.5 39.5 43.5
+             C 39.5 47.2 35.5 49.5 30 49.5
+             C 24.2 49.5 19.8 47.2 17.2 44.8
+             L 15 50.8
+             C 18.5 53.2 24 55 30.5 55
+             C 41.2 55 47.2 49.8 47.2 42.5
+             C 47.2 35 39.5 32.5 33 30.2
+             C 28 28.5 25.5 26.8 25.5 23.8
+             C 25.5 20.2 29 18.2 34 18.2
+             C 38.2 18.2 41.8 19.5 43.8 21.2
+             Z"
+          fill="url(#sLetter)"/>
+  </g>
+</svg>
